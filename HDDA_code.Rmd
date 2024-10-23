@@ -1,0 +1,378 @@
+---
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load the necessary dataset and library:
+
+```{r message=FALSE, warning=FALSE, eval = FALSE}
+
+library(tidyverse)
+library(MASS)
+library(patchwork)
+library(broom)
+
+Market <- read_csv('Market.csv') %>% 
+  mutate(MarketReturn = MarketReturn / 100)
+Portfolio <- read_csv('SampleE.csv')
+Combined_Portfolio <- inner_join(Portfolio, Market, by = "Date")
+```
+
+## Appendix A: Preliminary Data Analysis
+
+```{r, echo=TRUE, eval=TRUE, eval =FALSE}
+#Data Cleaning
+sum(is.na(Portfolio))
+```
+```{r, warning=FALSE, message=FALSE, eval=FALSE}
+#Preliminary Data Analysis
+df_long <- Combined_Portfolio %>%
+  pivot_longer(cols = -Date, names_to = "Stock", values_to = "Value")
+
+df_grouped <- df_long %>%
+  mutate(Group = substr(Stock, 1, 1)) %>%  
+  group_by(Date, Group) %>%
+  summarise(MeanValue = mean(Value, na.rm = TRUE)) %>%  
+  ungroup()
+
+df_grouped <- df_long %>%
+  mutate(Group = substr(Stock, 1, 1)) %>%  
+  mutate(Group = case_when(
+    Group == "B" ~ "Mining (B)",
+    Group == "C" ~ "Construction (C)", 
+    Group == "D" ~ "Manufacturing (D)",
+    Group == "E" ~ "Transportations and Public Utilities (E)", 
+    Group == "F" ~ "Wholesale Trade (F)", 
+    Group == "G" ~ "Retail Trade (G)", 
+    Group == "H" ~ "Finance, Insurance, and Real Estate (H)", 
+    Group == "I" ~ "Services (I)", 
+    Group == "M" ~ "Market Return",
+    TRUE ~ Group  
+  )) %>%
+  group_by(Date, Group) %>%
+  summarise(MeanValue = mean(Value, na.rm = TRUE)) %>%
+  ungroup()
+
+df_grouped <- df_grouped %>%
+  mutate(Date = as.Date(paste0(gsub("Y", "", gsub("M", "-", Date)), "-01"), format = "%Y-%m-%d"))
+```
+```{r, eval = FALSE}
+plot1 <- ggplot(df_grouped, aes(x = Date, y = MeanValue, group = Group)) +
+  geom_line(aes(color = ifelse(Group == "Market Return", "Market Return", "Other")), size = 0.8) +
+  labs(title = "Time Plot of Industry Group Mean Returns", x = "Date", y = "Return") +
+  scale_x_date(date_breaks = "5 years", date_labels = "%Y") + 
+  scale_color_manual(values = c("Market Return" = "red", "Other" = "black"))+
+  facet_wrap(~Group, ncol = 2)+
+  theme(legend.position = "none", 
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+plot1
+```
+
+```{r, echo=TRUE, eval=FALSE}
+df_wide <- df_grouped %>%
+  pivot_wider(names_from = Group, values_from = MeanValue)
+
+cor_matrix <- cor(df_wide[, -1], use = "complete.obs") 
+
+market_return_correlations <- cor_matrix["Market Return", ] %>% 
+  as.data.frame() %>% 
+  round(4)
+colnames(market_return_correlations) <- ("Market Return")
+
+print(market_return_correlations)
+```
+
+```{r, eval = FALSE}
+# Create the new column for Industry by extracting the first letter of each stock name
+Portfolio_long <- Portfolio %>%
+  pivot_longer(cols = -Date, names_to = "Stock", values_to = "Returns")
+
+# Extract the first letter of each Stock to create an Industry column
+Portfolio_long <- Portfolio_long %>%
+  mutate(Industry = substr(Stock, 1, 1))
+
+# Map the first letters to the corresponding industry names
+Portfolio_long$Industry <- recode(Portfolio_long$Industry,
+                                  "B" = "B - Mining",
+                                  "D" = "D - Manufacturing",
+                                  "E" = "E - Transportation and Public Utilities",
+                                  "F" = "F - Wholesale Trade",
+                                  "G" = "G - Retail Trade",
+                                  "H" = "H - Finance, Insurance, and Real Estate",
+                                  "I" = "I - Services")
+
+# Convert the Date column to Date format
+Portfolio_long$Date <- as.Date(paste0(gsub("Y", "", gsub("M", "-", Portfolio_long$Date)), "-01"), format = "%Y-%m-%d")
+
+# Create the time series plot with color based on Industry
+ggplot(Portfolio_long, aes(x = Date, y = Returns, color = Industry)) +
+  geom_point(cex = 0.5) +
+  labs(title = "Stock Returns Over Time by Industry", 
+       x = "Date", 
+       y = "Returns", 
+       color = "Industry") +  
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+
+## Appendix B: Principal Component Analysis
+```{r,eval = FALSE}
+##Principal Component Analysis
+PCA_out <- Portfolio %>% 
+  column_to_rownames('Date') %>% 
+  prcomp(scale. = TRUE)
+
+summary(PCA_out)
+```
+```{r, eval = FALSE}
+screeplot(PCA_out,type = 'l')
+
+biplot(PCA_out, scale = 0, cex = 0.5, arrow.len = 0.1, xlab = "PC1", ylab = "PC2", col = c("lightgrey", "blue"))
+```
+```{r,eval = FALSE}
+cor(Market$MarketReturn, PCA_out$x)
+
+#### Market Return and PC1 overtime
+PC_df <- as.data.frame(PCA_out$x)
+# Re-attach the Date column to the PCA results
+PC_df$Date <- rownames(PC_df)
+PC_df$Date <- as.Date(paste0(gsub("Y", "", gsub("M", "-", PC_df$Date)), "-01"), format = "%Y-%m-%d")
+Market$Date <- as.Date(paste0(gsub("Y", "", gsub("M", "-", Market$Date)), "-01"), format = "%Y-%m-%d")
+# Determine the y-axis limits based on PC1 with a buffer of +/- 5
+y_limits <- range(PC_df$PC1)
+
+```
+
+```{r, eval=FALSE}
+# Create PC1 with consistent y-axis scale and title
+p1 <- ggplot(PC_df, aes(x = Date, y = PC1)) +
+  geom_line() +
+  labs(title = "Principal Component 1", y = NULL) +  # Title for PC1
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),  # Remove x-axis labels
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),  # Remove y-axis labels
+        axis.ticks.y = element_blank()) +
+  ylim(y_limits)
+
+# Create PC2 with consistent y-axis scale and title
+p2 <- ggplot(PC_df, aes(x = Date, y = PC2)) +
+  geom_line() +
+  labs(title = "Principal Component 2", y = NULL) +  # Title for PC2
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),  # Remove x-axis labels
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),  # Remove y-axis labels
+        axis.ticks.y = element_blank()) +
+  ylim(y_limits)
+
+# Create PC3 with consistent y-axis scale and title
+p3 <- ggplot(PC_df, aes(x = Date, y = PC3)) +
+  geom_line() +
+  labs(title = "Principal Component 3", y = NULL) +  # Title for PC3
+  theme_minimal() +
+  theme(axis.text.x = element_blank(),  # Remove x-axis labels
+        axis.title.x = element_blank(),
+        axis.text.y = element_blank(),  # Remove y-axis labels
+        axis.ticks.y = element_blank()) +
+  ylim(y_limits)
+
+# Create PC4 with consistent y-axis scale and title
+p4 <- ggplot(PC_df, aes(x = Date, y = PC4)) +
+  geom_line() +
+  labs(title = "Principal Component 4", y = NULL) +  # Title for PC4
+  theme_minimal() +
+  theme(axis.title.x = element_blank(),
+        axis.text.y = element_blank(),  # Remove y-axis labels
+        axis.ticks.y = element_blank()) +
+  ylim(y_limits)
+
+# Combine the four plots
+combined_plot <- p1 / p2 / p3 / p4
+
+# Display the combined plot
+print(combined_plot)
+
+```
+
+```{r,eval = FALSE}
+cor(Market$MarketReturn, PC_df$PC1)
+```
+
+## Appendix C: Factor Analysis
+```{r,eval = FALSE}
+FA <- Portfolio %>%
+  column_to_rownames('Date')%>%
+  scale() %>% 
+  factanal(factors = 2,rotation = 'none',scores = 'none')
+
+# Extract loadings directly from the factanal object
+loading <- FA$loadings
+
+# Convert the loadings to a dataframe
+loading_df <- as.data.frame(unclass(loading))
+loading_df_sorted <- loading_df[order(rownames(loading_df)), ]
+loading_df_sorted[loading_df_sorted > -0.1 & loading_df_sorted < 0.1] <- 0
+loading_df_sorted <- loading_df_sorted %>%
+  mutate(across(everything(), ~ round(., 3))) %>% 
+  mutate(across(everything(), ~ ifelse(. == 0, "-", .)))
+
+
+cor(Portfolio$E37381, Market$MarketReturn)
+cor(Portfolio$H75075, Market$MarketReturn)
+cor(Portfolio$E14795, Market$MarketReturn)
+cor(Portfolio$H89551, Market$MarketReturn)
+
+FA$uniquenesses
+sorted_uniqueness <- sort(FA$uniquenesses, decreasing = TRUE)
+
+
+# Getting the 5 lowest values
+lowest_5 <- head(sorted_uniqueness, 5)
+
+# Getting the 5 highest values
+highest_5 <- tail(sorted_uniqueness, 5)
+
+# Display the results
+lowest_5
+highest_5
+
+FA_v <- Portfolio %>%
+  column_to_rownames('Date')%>%
+  scale() %>% 
+  factanal(factors = 2,rotation = 'varimax',scores = 'none')
+
+FA_p <- Portfolio %>%
+  column_to_rownames('Date')%>%
+  scale() %>% 
+  factanal(factors = 2,rotation = 'promax',scores = 'none')
+
+
+```
+#### 7 Factors
+```{r,eval = FALSE}
+FA_7 <- Portfolio %>%
+  column_to_rownames('Date')%>%
+  scale() %>% 
+  factanal(factors = 7,rotation = 'none',scores = 'none')
+
+# Extract loadings directly from the factanal object
+loading_1 <- FA_7$loadings
+
+# Convert the loadings to a dataframe
+loading_df_1 <- as.data.frame(unclass(loading_1))
+loading_df_sorted_1 <- loading_df_1[order(rownames(loading_df)), ]
+loading_df_sorted_1[loading_df_sorted_1 > -0.1 & loading_df_sorted_1 < 0.1] <- 0
+loading_df_sorted_1 <- loading_df_sorted_1 %>%
+  mutate(across(everything(), ~ round(., 3))) %>% 
+  mutate(across(everything(), ~ ifelse(. == 0, "-", .)))
+loading_df_sorted_1
+```
+
+```{r,eval = FALSE}
+
+FA_v$loadings
+FA_p$loadings
+fa_df<-tidy(FA) 
+
+```
+```{r, echo=TRUE, eval=FALSE}
+NoRot<-ggplot(fa_df,aes(x=fl1,y=fl2,
+                        label=variable))+
+  geom_segment(aes(xend=fl1,
+                   yend=fl2,x=0,y=0),
+               arrow = arrow(length = unit(0.1, "inches"), 
+               ),size = 0.1)+
+  labs(title = "Without Rotation", 
+       x = "Factor Loading 1", 
+       y = "Factor Loading 2")+
+  theme(  plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+
+
+fa_df_1<-tidy(FA_v) 
+VRot <-ggplot(fa_df_1,aes(x=fl1,y=fl2,
+                          label=variable))+
+  geom_segment(aes(xend=fl1,
+                   yend=fl2,x=0,y=0),
+               arrow = arrow(length = unit(0.1, "inches"), 
+               ),size = 0.1)+
+  labs(title = "Varimax Rotation",
+       x = "Factor Loading 1", 
+       y = "Factor Loading 2") +
+  theme(  plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+
+fa_df_2<-tidy(FA_p) 
+ProRot <- ggplot(fa_df_2,aes(x=fl1,y=fl2,
+                             label=variable))+
+  geom_segment(aes(xend=fl1,
+                   yend=fl2,x=0,y=0),
+               arrow = arrow(length = unit(0.1, "inches"), 
+               ),size = 0.1)+
+  labs(title = "Promax Rotation",
+       x = "Factor Loading 1", 
+       y = "Factor Loading 2") +
+  theme(  plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+Merged <- NoRot/VRot/ProRot
+Merged
+```
+
+```{r,eval = FALSE}
+FA_scores <- Portfolio %>%
+  column_to_rownames('Date')%>%
+  scale() %>% 
+  factanal(factors = 2,rotation = 'none',scores = 'Bartlett')
+FA_scores$scores <- scale(FA_scores$scores)
+
+df <- as.data.frame(FA_scores$scores)
+df$Date <- rownames(df)
+df_subset <- df[, c("Date", "Factor1")]
+df_subset$Date <- as.Date(paste0(gsub("Y", "", gsub("M", "-", df_subset$Date)), "-01"), format = "%Y-%m-%d")
+```
+```{r, eval=FALSE}
+# Extract the Date and Factor1 columns into a new dataframe
+
+p5 <- ggplot(df_subset, aes(x = Date, y=Factor1))+
+  geom_line() + 
+  labs(title = "Time Series of Factor 1",
+       x = "Date", 
+       y = "Factor Score 1") +
+  theme(  plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+combined_plot_1 <- p5 / p1
+combined_plot_1
+```
+```{r,eval = FALSE}
+cor(df_subset$Factor1, Market$MarketReturn)
+```
+
+```{r,eval = FALSE}
+cor(Portfolio$E37381, Market$MarketReturn)
+cor(Portfolio$H75075, Market$MarketReturn)
+cor(Portfolio$E14795, Market$MarketReturn)
+cor(Portfolio$H89551, Market$MarketReturn)
+
+FA$uniquenesses
+sorted_uniqueness <- sort(FA$uniquenesses, decreasing = TRUE)
+
+
+lowest_5 <- head(sorted_uniqueness, 5)
+
+highest_5 <- tail(sorted_uniqueness, 5)
+
+lowest_5
+highest_5
+```
+
+
+
+
+
